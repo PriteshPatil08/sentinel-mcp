@@ -62,6 +62,8 @@ Never write an entire file in one shot. Instead:
 
 If a logical unit is itself large (e.g., a method with complex logic), break it into sub-units (signature → body → error path) and explain each.
 
+**Within each unit, go line by line or block by block** — whichever makes better pedagogical sense. Before writing each line or block, explain what it does, why it's there, and what would break or change if it were missing or different. Explain everything worth knowing: the type choices, the API behaviour, the subtle defaults, the tradeoffs. Never dump a block of code without walking through it first.
+
 The goal is that the user understands *why* every line exists before it's written — not just what it does.
 
 ---
