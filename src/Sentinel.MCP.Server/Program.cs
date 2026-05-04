@@ -17,7 +17,8 @@ builder.Services.AddHttpClient("HealthCheck.NoFollow")
 builder.Services
     .AddMcpServer()
     .WithStdioServerTransport()
-    .WithTools<HealthCheckTool>();
+    .WithTools<HealthCheckTool>()
+    .WithTools<InspectSSLCertificateTool>();
 
 builder.Services.Configure<McpServerOptions>(options =>
 {
