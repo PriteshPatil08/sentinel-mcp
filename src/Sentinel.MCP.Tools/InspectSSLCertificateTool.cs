@@ -22,56 +22,107 @@ public sealed class InspectSSLCertificateTool
         CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        var chainValid = false;
 
-        using var tcpClient = new TcpClient();
-        await tcpClient.ConnectAsync(hostname, port, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var chainValid = false;
+
+            using var tcpClient = new TcpClient();
+            await tcpClient.ConnectAsync(hostname, port, cancellationToken).ConfigureAwait(false);
 
 #pragma warning disable CA5359
-        using var sslStream = new SslStream(
-            tcpClient.GetStream(),
-            leaveInnerStreamOpen: false,
-            (_, certificate, chain, _) =>
-            {
-                chainValid = chain?.Build(new X509Certificate2(certificate!)) ?? false;
-                return true;
-            });
+            using var sslStream = new SslStream(
+                tcpClient.GetStream(),
+                leaveInnerStreamOpen: false,
+                (_, certificate, chain, _) =>
+                {
+                    chainValid = chain?.Build(new X509Certificate2(certificate!)) ?? false;
+                    return true;
+                });
 #pragma warning restore CA5359
 
-        await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            await sslStream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+            {
+                TargetHost = hostname,
+                EnabledSslProtocols = SslProtocols.None,
+                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+            }, cancellationToken).ConfigureAwait(false);
+
+            var rawCert = sslStream.RemoteCertificate!;
+            using var cert = X509CertificateLoader.LoadCertificate(rawCert.Export(X509ContentType.Cert));
+
+            var now = DateTime.UtcNow;
+            var daysUntilExpiry = (int)(cert.NotAfter.ToUniversalTime() - now).TotalDays;
+            var isExpired = cert.NotAfter.ToUniversalTime() < now;
+            var isExpiringSoon = !isExpired && daysUntilExpiry <= 30;
+
+            var sanExtension = cert.Extensions
+                .OfType<X509SubjectAlternativeNameExtension>()
+                .FirstOrDefault();
+            var sans = sanExtension?.EnumerateDnsNames().ToList() ?? [];
+
+            stopwatch.Stop();
+            return ToolResult.Ok(new SSLCertificateResponse
+            {
+                Subject = cert.Subject,
+                Issuer = cert.Issuer,
+                ValidFrom = cert.NotBefore.ToUniversalTime(),
+                ExpiresOn = cert.NotAfter.ToUniversalTime(),
+                DaysUntilExpiry = daysUntilExpiry,
+                IsExpired = isExpired,
+                IsExpiringSoon = isExpiringSoon,
+                TlsVersion = sslStream.SslProtocol.ToString(),
+                CertificateChainValid = chainValid,
+                SubjectAlternativeNames = sans,
+                Thumbprint = cert.Thumbprint
+            }, stopwatch.ElapsedMilliseconds);
+        }
+        catch (SocketException ex) when (ex.SocketErrorCode is SocketError.HostNotFound or SocketError.NoData)
         {
-            TargetHost = hostname,
-            EnabledSslProtocols = SslProtocols.None,
-            CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-        }, cancellationToken).ConfigureAwait(false);
-
-        var rawCert = sslStream.RemoteCertificate!;
-        using var cert = X509CertificateLoader.LoadCertificate(rawCert.Export(X509ContentType.Cert));
-
-        var now = DateTime.UtcNow;
-        var daysUntilExpiry = (int)(cert.NotAfter.ToUniversalTime() - now).TotalDays;
-        var isExpired = cert.NotAfter.ToUniversalTime() < now;
-        var isExpiringSoon = !isExpired && daysUntilExpiry <= 30;
-
-        var sanExtension = cert.Extensions
-            .OfType<X509SubjectAlternativeNameExtension>()
-            .FirstOrDefault();
-        var sans = sanExtension?.EnumerateDnsNames().ToList() ?? [];
-
-        stopwatch.Stop();
-        return ToolResult.Ok(new SSLCertificateResponse
+            stopwatch.Stop();
+            return ToolResult.Fail<SSLCertificateResponse>(new ToolError
+            {
+                ErrorCode = ToolErrorCode.ConnectionFailed,
+                Message = $"DNS resolution failed for '{hostname}': {ex.Message}"
+            }, stopwatch.ElapsedMilliseconds);
+        }
+        catch (SocketException ex)
         {
-            Subject = cert.Subject,
-            Issuer = cert.Issuer,
-            ValidFrom = cert.NotBefore.ToUniversalTime(),
-            ExpiresOn = cert.NotAfter.ToUniversalTime(),
-            DaysUntilExpiry = daysUntilExpiry,
-            IsExpired = isExpired,
-            IsExpiringSoon = isExpiringSoon,
-            TlsVersion = sslStream.SslProtocol.ToString(),
-            CertificateChainValid = chainValid,
-            SubjectAlternativeNames = sans,
-            Thumbprint = cert.Thumbprint
-        }, stopwatch.ElapsedMilliseconds);
+            stopwatch.Stop();
+            return ToolResult.Fail<SSLCertificateResponse>(new ToolError
+            {
+                ErrorCode = ToolErrorCode.ConnectionFailed,
+                Message = $"Connection to '{hostname}:{port}' failed: {ex.Message}"
+            }, stopwatch.ElapsedMilliseconds);
+        }
+        catch (AuthenticationException ex)
+        {
+            stopwatch.Stop();
+            return ToolResult.Fail<SSLCertificateResponse>(new ToolError
+            {
+                ErrorCode = ToolErrorCode.SslError,
+                Message = $"TLS handshake failed for '{hostname}': {ex.Message}"
+            }, stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+            return ToolResult.Fail<SSLCertificateResponse>(new ToolError
+            {
+                ErrorCode = ToolErrorCode.Timeout,
+                Message = $"Connection to '{hostname}:{port}' timed out"
+            }, stopwatch.ElapsedMilliseconds);
+        }
+#pragma warning disable CA1031
+        catch (Exception ex)
+#pragma warning restore CA1031
+        {
+            stopwatch.Stop();
+            return ToolResult.Fail<SSLCertificateResponse>(new ToolError
+            {
+                ErrorCode = ToolErrorCode.Unknown,
+                Message = ex.Message
+            }, stopwatch.ElapsedMilliseconds);
+        }
     }
 }
