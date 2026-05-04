@@ -145,3 +145,47 @@
 > `List<string>` is the concrete type — pick it internally when you need to build and mutate a collection.
 > `IList<string>` is the mutable interface — expose it when callers are allowed to add or remove items.
 > `IReadOnlyList<string>` is the read-only interface — expose it on DTOs and responses where callers should only read, preserving the flexibility to change the backing type later.
+
+---
+
+## Quiz 4 — InspectSSLCertificate Tool
+
+**Q21. Why use `TcpClient` + `SslStream` instead of `HttpClient` to inspect SSL certificates?**
+> `HttpClient` validates the cert before you can access it — invalid certs (self-signed, expired, broken chain) throw before you ever get a reference to the cert object.
+> `TcpClient` + `SslStream` with a custom validation callback lets us connect regardless and access `sslStream.RemoteCertificate` for every cert, good or bad.
+> Inspection requires observing without judging — `HttpClient` is built for trust decisions, not observation.
+
+---
+
+**Q22. What is the concrete technical difference between `catch (T ex) when (condition)` and `catch (T ex) { if (!condition) throw; }`?**
+> With `when`, if the condition is false the stack never unwinds — the runtime keeps searching for the next handler with all frames intact and `finally`/`using` blocks not yet run.
+> With `catch { throw; }`, the stack has already unwound to enter the catch block — `finally` blocks and `using` disposals have already fired before you rethrow.
+> The debugger also breaks at the original throw site with `when`, not at the rethrow point — full stack context is preserved.
+
+---
+
+**Q23. What does `SslProtocols.None` actually mean, and what regresses if you hardcode `SslProtocols.Tls13`?**
+> `SslProtocols.None` defers protocol selection to the OS security policy — when the OS patches out TLS 1.0/1.1, your code inherits that improvement automatically with no redeploy.
+> Hardcoding `Tls13` breaks against any server still on TLS 1.2 (common in enterprise) and overrides OS-level security patches, making you less secure than saying nothing.
+> `None` is not a lack of configuration — it's deliberate delegation of security policy to the authority best placed to maintain it.
+
+---
+
+**Q24. In the validation callback, `chain.Build()` and `return true` are both booleans — what does each one mean and why do we separate them?**
+> `chain.Build()` answers "can this cert be traced to a trusted root CA?" — we capture this as `chainValid` to report it truthfully in the response.
+> `return true` answers "should the TLS handshake proceed?" — we always return `true` so we can see every cert regardless of chain validity.
+> Collapsing them into `return chain.Build()` would reject self-signed and broken-chain certs before we could inspect them — the same problem as using `HttpClient`.
+
+---
+
+**Q25. Why check `ex.SocketErrorCode` as an enum rather than `ex.Message.Contains("Host not found")`?**
+> `ex.Message` changes across OS versions, .NET versions, and locales — a French Windows machine produces a different string, silently breaking your catch filter with no compile error.
+> `SocketErrorCode` is a numeric contract between the OS and the runtime — `SocketError.HostNotFound` is the same value everywhere, forever.
+> The same principle drives `ToolErrorCode` — we return typed enum values to the LLM so it can match against stable codes, not parse fragile free-text strings.
+
+---
+
+**Q26. When is suppressing a Roslyn analyser warning correct, and when is it a red flag?**
+> Suppression is correct when you can state in one sentence exactly why this specific case is a justified exception to a rule you still agree with in general.
+> It is a red flag when the suppression is lazy, file-scoped, or you cannot articulate the reason — the analyser is now blind and future readers have no idea why.
+> Scope matters too: suppress with `#pragma disable/restore` around the single line, not the file — the suppression should be as small as the justification.
