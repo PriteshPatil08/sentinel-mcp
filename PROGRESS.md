@@ -195,9 +195,12 @@ cert.Thumbprint                       → SHA-1 of DER bytes (unique cert ID)
 ---
 
 ## Step 5 — LLM Integration (IN PROGRESS)
-**Date:** 2026-05-04/05 | Not yet committed
+**Date:** 2026-05-06 | Commits: `aedb0f3` (step-5.1)
 
 **Goal:** Wire Claude into the client so natural language → tool call → synthesised answer.
+
+### Step 5.1 — Packages + Configuration + MCP Client ✅
+**Commit:** `aedb0f3`
 
 **Packages added to `Sentinel.MCP.Client`:**
 - `ModelContextProtocol` 1.2.0
@@ -206,14 +209,13 @@ cert.Thumbprint                       → SHA-1 of DER bytes (unique cert ID)
 
 **User-secrets initialised.** API key stored as `Anthropic:ApiKey`.
 
-**`Program.cs` is currently the default `Hello, World!` placeholder — ready to be replaced.**
+**`Program.cs` blocks done:**
+- Block 1: `Host.CreateApplicationBuilder` + reads `Anthropic:ApiKey` from user-secrets (`?? throw` for fail-fast)
+- Block 2: `McpClientFactory.CreateAsync` with `StdioClientTransport` — spawns server as child process, calls `GetAIFunctionsAsync()` to get tools as MEA `AIFunction` objects
 
-**What needs to be built:**
-1. Read API key from configuration
-2. Create `AnthropicClient` → wrap as `IChatClient`
-3. Spawn MCP server process via `StdioClientTransport`
-4. Discover tools from MCP server → convert to MEA `AIFunction` list
-5. Chat loop: read user input → send to Claude with tools → handle tool calls → print final answer
+**What still needs to be built:**
+- Block 3: `AnthropicClient` → `IChatClient` with `.UseFunctionInvocation()` middleware
+- Block 4: Chat loop — read input → send to Claude with tools → print answer
 
 ---
 
