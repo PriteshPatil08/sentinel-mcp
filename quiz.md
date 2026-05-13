@@ -185,6 +185,62 @@
 
 ---
 
+## Quiz 5 — LLM Integration, MCP Client & the MEA Stack
+
+**Q27. When you call `McpClient.CreateAsync` with `StdioClientTransport` — what is actually happening at the OS level?**
+> The OS spawns a new child process running the MCP server; the client is the parent.
+> Two anonymous pipes are wired between them — client writes to the server's stdin, reads from the server's stdout.
+> Stdout is a protocol pipe, not a console — any log line on stdout is a malformed JSON-RPC frame. That's why server logs go to stderr.
+> `await using var mcpClient` sends the kill signal to the child on exit — the server lifetime is bound to the client.
+> The MCP handshake sequence is: `initialize` → `initialized` → `tools/list`, before any tool call is made.
+
+---
+
+**Q28. Why `await using` specifically — what does the `await` add over plain `using`?**
+> `McpClient` implements `IAsyncDisposable`, not just `IDisposable`.
+> Disposal involves I/O waits — draining the pipe, sending kill signal, waiting for the child process to exit.
+> `await using` lets those waits happen asynchronously without blocking the calling thread.
+> `using` alone would call synchronous `Dispose()`, blocking the thread for the full teardown duration.
+
+---
+
+**Q29. `ListToolsAsync()` returns `IList<McpClientTool>`. `ChatOptions.Tools` expects `IList<AITool>`. How does the assignment work without a cast?**
+> `McpClientTool` extends `AIFunction` which extends `AITool` — it IS an `AITool` through inheritance.
+> The MCP SDK was deliberately built to implement MEA's `AITool` contract so tools are plug-and-play with any MEA-compatible chat client.
+> The consumer codes to `AITool`; the provider implements `AITool` — they never need to know each other's concrete types.
+
+---
+
+**Q30. Walk through what `UseFunctionInvocation()` does when Claude returns a `tool_use` response.**
+> Claude returns `stop_reason: "tool_use"` with a content block containing the tool name and arguments as JSON.
+> The middleware intercepts, calls `McpClientTool.InvokeAsync()` which sends a `tools/call` JSON-RPC message down the stdio pipe.
+> The tool result is appended to history alongside the tool call turn, then a second request is sent to Claude.
+> Claude synthesises the raw result into natural language — minimum two round trips per tool call.
+
+---
+
+**Q31. What happens if you remove `history.AddRange(response.Messages)` and only track user messages?**
+> Claude sees a stream of user messages with no assistant responses between them — one side of a phone call.
+> Tool call turns vanish from context — Claude has no record of what it called or what the result was, causing hallucination or repeated calls.
+> `List<ChatMessage>` is the entire session state; Claude is stateless — every API call is cold and history is the only memory.
+
+---
+
+**Q32. `AnthropicClient anthropicClient = new()` — where does it get the API key, and what is the production risk?**
+> The SDK reads `ANTHROPIC_API_KEY` from the environment by convention.
+> In our code we manually bridge: user-secrets → string → `Environment.SetEnvironmentVariable` → SDK reads it back. Inelegant; the cleaner form passes the key directly to the constructor.
+> Production risk: `Environment.SetEnvironmentVariable` at runtime sets a process-level env var in code — any monitoring agent or crash dump that snapshots the process environment exposes the key in plaintext.
+> In production, secrets should be injected at the infrastructure level (container env vars, Key Vault), never created inside application code.
+
+---
+
+**Q33. What is the concrete benefit of coding against `IChatClient` instead of `AnthropicClient` directly?**
+> `IChatClient` is MEA's common chat abstraction — all LLMs share the same shape (send messages, get response), so they can all satisfy one interface.
+> Swapping providers (Claude → GPT-4) requires changing one line — the `AsIChatClient()` call. The history management, middleware, and chat loop are untouched.
+> It also enables test doubles: swap the real client for a scripted fake — deterministic tests, no API calls, no cost.
+
+---
+
 **Q26. When is suppressing a Roslyn analyser warning correct, and when is it a red flag?**
 > Suppression is correct when you can state in one sentence exactly why this specific case is a justified exception to a rule you still agree with in general.
 > It is a red flag when the suppression is lazy, file-scoped, or you cannot articulate the reason — the analyser is now blind and future readers have no idea why.
